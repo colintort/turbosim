@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TurboSim textbook checks</title>
+<style>
+  :root { --bg: #0a0f1f; --panel: #111a33; --line: #26335f; --text: #e8eeff; --muted: #8e9bc7; --ok: #7dff9b; --bad: #ff6b86; --cyan: #38e1ff; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; margin: 0; padding: 20px 16px; }
+  main { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  a { color: var(--cyan); }
+  .hint { color: var(--muted); }
+  table { border-collapse: collapse; margin: 12px 0; }
+  td { padding: 3px 10px; border-bottom: 1px solid var(--line); }
+  td:last-child { font-family: Consolas, monospace; color: var(--cyan); }
+  .ok { color: var(--ok) !important; } .bad { color: var(--bad) !important; }
+  pre { background: var(--panel); padding: 10px; border-radius: 8px; max-height: 60vh; overflow: auto; font-size: 12px; white-space: pre; }
+  button { background: var(--cyan); color: #04202a; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-weight: 700; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body>
+<main>
+<h1>TurboSim textbook checks</h1>
+<p class="hint">Runs TurboSim's 39 textbook worked examples (Moran 9th ed. and others) and the ME 313 nuclear Rankine project through the same solver the app uses, here in your browser, and compares every answer with the book. <a href="./">Back to TurboSim</a></p>
+<table id="t"></table>
+<button id="go" disabled>Run the 42 checks</button>
+<span id="status" class="hint"></span>
+<pre id="out" hidden></pre>
+</main>
+<script>
+(() => {
+  const T = document.getElementById("t");
+  const row = (what, value, cls = "") => {
+    const tr = T.insertRow();
+    tr.insertCell().textContent = what;
+    const c = tr.insertCell();
+    c.textContent = value;
+    if (cls) c.className = cls;
+  };
+  const secs = (a, b) => `${((b - a) / 1000).toFixed(1)} s`;
+  window.__checks = { done: false };
+
+  const v = new URLSearchParams(location.search).get("v") || String(Date.now());
+  const w = new Worker(`pyworker.js?v=${encodeURIComponent(v)}`);
+  let seq = 0;
+  const pending = new Map();
+  const t0 = performance.now();
+  w.onmessage = ({ data }) => {
+    if (data.type === "status") {
+      document.getElementById("status").textContent = data.state === "ready" ? "" : ` ${data.text}…`;
+      if (data.state === "ready") {
+        row("Solver ready in this browser", secs(t0, performance.now()));
+        document.getElementById("go").disabled = false;
+        if (location.hash === "#run") document.getElementById("go").click();
+      }
+      if (data.state === "failed") row("The solver could not start", data.text, "bad");
+      return;
+    }
+    const job = pending.get(data.id);
+    pending.delete(data.id);
+    if (data.error !== undefined) job.reject(new Error(data.error));
+    else job.resolve(data);
+  };
+  const call = (route, body) => new Promise((resolve, reject) => {
+    const id = ++seq;
+    pending.set(id, { resolve, reject });
+    w.postMessage({ id, route, body });
+  });
+
+  const go = document.getElementById("go");
+  go.onclick = async () => {
+    go.disabled = true;
+    document.getElementById("status").textContent = " running… (usually under a minute)";
+    const t1 = performance.now();
+    try {
+      const r = JSON.parse((await call("validate", "")).json);
+      const t2 = performance.now();
+      const out = document.getElementById("out");
+      out.hidden = false;
+      out.textContent = r.text;
+      const last = r.text.trim().split("\n").pop();
+      row("Result", last, r.ok ? "ok" : "bad");
+      row("Time", secs(t1, t2));
+      window.__checks = { done: true, ok: r.ok, last };
+    } catch (e) {
+      row("The checks could not run", e.message, "bad");
+      window.__checks = { done: true, ok: false, error: e.message };
+    }
+    document.getElementById("status").textContent = "";
+    go.disabled = false;
+  };
+})();
+</script>
+</body>
+</html>
