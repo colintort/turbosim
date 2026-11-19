@@ -137,22 +137,31 @@ class _ClosedSolver:
         self.gas_info = {}   # humid air: omega, k
 
     def _engine(self, e):
-        """Cylinder geometry (SI) from bore and the piston's distance from the
-        head at top and bottom dead centre, plus speed for the power."""
+        """Cylinder geometry (SI) from bore, stroke and compression ratio, plus
+        speed for the power. Displacement Vd = (π/4)·bore²·stroke, clearance
+        volume V_TDC = Vd / (r − 1), V_BDC = r·V_TDC. Older files gave the
+        piston's distance from the head at TDC and BDC instead; those still work."""
         def num(key, label, unit=None):
             x = _number(e.get(key), label)
             if x is not None and x <= 0:
                 raise SolveError(f"{label} must be greater than zero.")
             return to_si(self.system, unit, x) if x is not None and unit else x
         bore = num("bore", "Bore", "bore")
-        tdc = num("tdc", "Top dead centre", "bore")
-        bdc = num("bdc", "Bottom dead centre", "bore")
-        if bore is None or tdc is None or bdc is None:
+        stroke = num("stroke", "Stroke", "bore")
+        r = num("r", "Compression ratio")
+        if stroke is None and r is None:
+            tdc = num("tdc", "Top dead centre", "bore")
+            bdc = num("bdc", "Bottom dead centre", "bore")
+            if tdc is not None and bdc is not None:
+                if bdc <= tdc:
+                    raise SolveError("Bottom dead centre must be farther from the head than top dead centre.")
+                stroke, r = bdc - tdc, bdc / tdc
+        if bore is None or stroke is None or r is None:
             return {}
-        if bdc <= tdc:
-            raise SolveError("Bottom dead centre must be farther from the head than top dead centre.")
-        area = math.pi * bore ** 2 / 4
-        out = {"Vtdc": area * tdc, "Vbdc": area * bdc, "r": bdc / tdc}
+        if r <= 1:
+            raise SolveError("Compression ratio must be greater than 1.")
+        vd = math.pi * bore ** 2 / 4 * stroke
+        out = {"Vtdc": vd / (r - 1), "Vbdc": vd * r / (r - 1), "r": r}
         rpm = num("rpm", "Engine speed")
         if rpm is not None:
             out["cycles_per_s"] = rpm / 60 / ((num("strokes", "Strokes per cycle") or 4) / 2)
@@ -296,7 +305,7 @@ class _ClosedSolver:
         r = self._param(node, "r", name)
         if t == "compression" and self.engine:
             if r is not None and not _close(r, self.engine["r"]):
-                raise SolveError(f"{name}: r = {r:g}, but the cylinder's dead centres give {self.engine['r']:.6g}.")
+                raise SolveError(f"{name}: r = {r:g}, but the cylinder's compression ratio is {self.engine['r']:.6g}.")
             r = self.engine["r"]
         if r is not None and t == "compression":
             changed |= self._ratio(a, b, "v", r, name)
